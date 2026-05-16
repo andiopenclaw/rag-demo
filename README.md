@@ -43,8 +43,11 @@ source venv/bin/activate
 # 3. Run the full interactive demo
 python demo.py
 
-# 4. (Optional) Enable answer generation
-export OPENAI_API_KEY=sk-...
+# 4. (Optional) Enable answer generation — set one or more:
+export ANTHROPIC_API_KEY=sk-ant-...          # Claude
+export OPENAI_API_KEY=sk-...                 # OpenAI
+export AZURE_OPENAI_API_KEY=...              # Azure AI Foundry (Codex)
+export AZURE_OPENAI_ENDPOINT=https://...     # required for Foundry
 python demo.py
 
 # 5. Ask your own question
