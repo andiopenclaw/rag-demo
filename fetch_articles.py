@@ -66,14 +66,21 @@ def main():
         print(f"Fetching: {title} ...", end=" ", flush=True)
         try:
             article = fetch_wikipedia(title)
-            filename = title.replace(" ", "_").lower() + ".json"
+            safe_title = "".join(c if c.isalnum() or c in "-_ " else "_" for c in title)
+            filename = safe_title.replace(" ", "_").lower()[:80] + ".json"
             path = os.path.join(OUTPUT_DIR, filename)
+            # Guard against path traversal
+            if not os.path.abspath(path).startswith(os.path.abspath(OUTPUT_DIR)):
+                print(f"✗  Skipping unsafe filename: {filename}")
+                continue
             with open(path, "w") as f:
                 json.dump(article, f, indent=2)
             print(f"✓  ({article['word_count']:,} words)")
             results.append({"title": title, "file": filename, "words": article["word_count"]})
+        except OSError as e:
+            print(f"✗  File error for '{title}': {e}")
         except Exception as e:
-            print(f"✗  Error: {e}")
+            print(f"✗  Fetch error for '{title}': {e}")
         time.sleep(0.5)  # polite rate limiting
 
     print(f"\nFetched {len(results)}/{len(ARTICLES)} articles.")

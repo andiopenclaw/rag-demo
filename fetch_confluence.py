@@ -103,6 +103,9 @@ def make_headers() -> dict:
     return headers
 
 
+MAX_RESPONSE_BYTES = 10 * 1024 * 1024  # 10 MB cap per response
+
+
 def get_json(path: str, params: dict = None) -> dict:
     base = CONFIG["url"].rstrip("/")
     url = f"{base}{path}"
@@ -111,10 +114,13 @@ def get_json(path: str, params: dict = None) -> dict:
     req = urllib.request.Request(url, headers=make_headers())
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
-            return json.loads(resp.read())
+            data = resp.read(MAX_RESPONSE_BYTES + 1)
+            if len(data) > MAX_RESPONSE_BYTES:
+                raise RuntimeError("Response exceeded 10 MB limit — skipping")
+            return json.loads(data)
     except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8", errors="ignore")
-        raise RuntimeError(f"HTTP {e.code} {e.reason} — {body[:200]}") from e
+        # Don't echo server error body — it may contain sensitive info
+        raise RuntimeError(f"HTTP {e.code} {e.reason}") from e
 
 
 # ─────────────────────────────────────────────────────────────
@@ -231,8 +237,13 @@ def main():
                 }
 
                 safe_title = "".join(c if c.isalnum() or c in "-_ " else "_" for c in title)
-                filename = f"{space_key}_{safe_title[:60].replace(' ', '_').lower()}.json"
+                safe_space = "".join(c if c.isalnum() or c in "-_" else "_" for c in space_key)
+                filename = f"{safe_space}_{safe_title[:60].replace(' ', '_').lower()}.json"
                 path = os.path.join(OUTPUT_DIR, filename)
+                # Guard against any remaining path traversal
+                if not os.path.abspath(path).startswith(os.path.abspath(OUTPUT_DIR)):
+                    print(f"✗  Skipping unsafe filename: {filename}")
+                    continue
 
                 with open(path, "w") as f:
                     json.dump(article, f, indent=2, ensure_ascii=False)

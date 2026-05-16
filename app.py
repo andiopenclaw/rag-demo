@@ -43,9 +43,20 @@ except Exception as e:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+MAX_QUERY_LENGTH = 1000  # characters — prevents prompt stuffing
+
+
 def has_openai() -> bool:
     """Check at call time so env changes after startup are picked up."""
     return _openai_available and bool(os.environ.get("OPENAI_API_KEY"))
+
+
+def get_openai_key() -> str:
+    """Safely retrieve the OpenAI key — raises clearly if missing."""
+    key = os.environ.get("OPENAI_API_KEY")
+    if not key:
+        raise RuntimeError("OPENAI_API_KEY disappeared from environment")
+    return key
 
 
 # ── Chainlit handlers ─────────────────────────────────────────────────────────
@@ -79,6 +90,15 @@ async def on_message(message: cl.Message):
         return
 
     query = message.content.strip()
+
+    # Basic input guard — prevent prompt stuffing / very long inputs
+    if len(query) > MAX_QUERY_LENGTH:
+        await cl.Message(
+            content=f"⚠️ Query too long ({len(query)} chars). Please keep it under {MAX_QUERY_LENGTH} characters."
+        ).send()
+        return
+    if not query:
+        return
 
     # ── Step 1: Embed the query ───────────────────────────────────────────────
     async with cl.Step(name="1️⃣  Embedding query", type="tool") as step:
@@ -134,7 +154,7 @@ async def on_message(message: cl.Message):
 
     # ── Step 3: Generate answer ───────────────────────────────────────────────
     if has_openai():
-        oai = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
+        oai = AsyncOpenAI(api_key=get_openai_key())
         context = "\n\n---\n\n".join(
             f"[Source: {c['title']}]\n{c['text']}" for c in chunks
         )
@@ -147,7 +167,7 @@ async def on_message(message: cl.Message):
                 f"Sending **{len(context.split())} words** of context to `gpt-4o-mini`.\n\n"
                 f"Grounded on {len(chunks)} source chunks."
             )
-            stream = await oai.chat.completions.create(
+            stream = await oai.chat.completions.create(  # noqa: S106
                 model="gpt-4o-mini",
                 messages=[
                     {
