@@ -1,0 +1,12 @@
+[project]
+name = "RAG Demo — Space Exploration"
+enable_telemetry = false
+
+[UI]
+name = "RAG Demo"
+description = "Retrieval-Augmented Generation over Wikipedia articles"
+default_collapse_content = false
+hide_cot = false
+
+[meta]
+generated_by = "1.0.0"
