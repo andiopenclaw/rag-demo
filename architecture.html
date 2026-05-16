@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RAG Architecture</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #0f1117;
+    color: #e2e8f0;
+    padding: 24px 20px;
+    min-height: 100vh;
+  }
+  h1 { font-size: 18px; font-weight: 700; color: #fff; margin-bottom: 4px; }
+  .subtitle { font-size: 12px; color: #64748b; margin-bottom: 28px; }
+
+  /* ── Phase labels ── */
+  .phase-row {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 8px;
+    align-items: stretch;
+  }
+  .phase-label {
+    width: 90px;
+    flex-shrink: 0;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #64748b;
+    padding-top: 14px;
+  }
+  .phase-label.index { color: #38bdf8; }
+  .phase-label.query { color: #a78bfa; }
+
+  /* ── Flow row ── */
+  .flow {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    flex: 1;
+    flex-wrap: nowrap;
+  }
+
+  /* ── Boxes ── */
+  .box {
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    text-align: center;
+    white-space: nowrap;
+    position: relative;
+    min-width: 90px;
+  }
+  .box .icon { font-size: 18px; display: block; margin-bottom: 4px; }
+  .box .label { font-size: 11px; font-weight: 700; }
+  .box .sub { font-size: 10px; font-weight: 400; color: rgba(255,255,255,0.55); margin-top: 2px; }
+
+  .box.doc   { background: #1e293b; border: 1.5px solid #334155; }
+  .box.chunk { background: #0c2a3a; border: 1.5px solid #0ea5e9; color: #38bdf8; }
+  .box.embed { background: #1a1a3e; border: 1.5px solid #6366f1; color: #a5b4fc; }
+  .box.db    { background: #0d2a1f; border: 1.5px solid #10b981; color: #6ee7b7; }
+  .box.query { background: #2a1f0d; border: 1.5px solid #f59e0b; color: #fcd34d; }
+  .box.llm   { background: #2a0d1f; border: 1.5px solid #ec4899; color: #f9a8d4; }
+  .box.ans   { background: #1a2a0d; border: 1.5px solid #84cc16; color: #bef264; }
+
+  /* ── Arrows ── */
+  .arrow {
+    color: #475569;
+    font-size: 16px;
+    padding: 0 6px;
+    flex-shrink: 0;
+    align-self: center;
+  }
+  .arrow.down {
+    display: block;
+    text-align: center;
+    margin: 4px 0 4px 90px;
+    color: #6366f1;
+    font-size: 18px;
+  }
+
+  /* ── Divider ── */
+  .divider {
+    border: none;
+    border-top: 1px dashed #1e293b;
+    margin: 20px 0;
+  }
+
+  /* ── Highlight connector box ── */
+  .connector {
+    background: #1e1e2e;
+    border: 1.5px dashed #4b5563;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 11px;
+    color: #94a3b8;
+    text-align: center;
+    margin-left: 102px;
+    margin-bottom: 16px;
+    display: inline-block;
+  }
+  .connector strong { color: #e2e8f0; }
+
+  /* ── Legend ── */
+  .legend {
+    margin-top: 28px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .leg-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: #94a3b8;
+    background: #1e293b;
+    border-radius: 6px;
+    padding: 5px 10px;
+  }
+  .leg-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  /* ── Timing bar ── */
+  .timing {
+    margin-top: 24px;
+  }
+  .timing h2 { font-size: 12px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 12px; }
+  .t-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .t-label { font-size: 11px; color: #94a3b8; width: 160px; flex-shrink: 0; }
+  .t-bar-wrap { flex: 1; background: #1e293b; border-radius: 4px; height: 14px; overflow: hidden; }
+  .t-bar { height: 100%; border-radius: 4px; }
+  .t-val { font-size: 11px; color: #64748b; width: 60px; text-align: right; }
+</style>
+</head>
+<body>
+
+<h1>🚀 RAG Architecture</h1>
+<p class="subtitle">Retrieval-Augmented Generation — how the pipeline works</p>
+
+<!-- INDEXING PHASE -->
+<div class="phase-row">
+  <div class="phase-label index">① Index<br><span style="color:#334155;font-weight:400">Once upfront</span></div>
+  <div class="flow">
+    <div class="box doc">
+      <span class="icon">📄</span>
+      <div class="label">Documents</div>
+      <div class="sub">Wikipedia / PDFs / DB</div>
+    </div>
+    <span class="arrow">→</span>
+    <div class="box chunk">
+      <span class="icon">✂️</span>
+      <div class="label">Chunker</div>
+      <div class="sub">400w + 80w overlap</div>
+    </div>
+    <span class="arrow">→</span>
+    <div class="box embed">
+      <span class="icon">🔢</span>
+      <div class="label">Embeddings</div>
+      <div class="sub">384-dim vectors</div>
+    </div>
+    <span class="arrow">→</span>
+    <div class="box db">
+      <span class="icon">🗄️</span>
+      <div class="label">Vector DB</div>
+      <div class="sub">ChromaDB</div>
+    </div>
+  </div>
+</div>
+
+<hr class="divider">
+
+<!-- QUERY PHASE -->
+<div class="phase-row">
+  <div class="phase-label query">② Query<br><span style="color:#334155;font-weight:400">Every request</span></div>
+  <div class="flow">
+    <div class="box query">
+      <span class="icon">❓</span>
+      <div class="label">User Question</div>
+      <div class="sub">"How many walked on Moon?"</div>
+    </div>
+    <span class="arrow">→</span>
+    <div class="box embed">
+      <span class="icon">🔢</span>
+      <div class="label">Embed Query</div>
+      <div class="sub">same model</div>
+    </div>
+    <span class="arrow">→</span>
+    <div class="box db">
+      <span class="icon">🔍</span>
+      <div class="label">Similarity Search</div>
+      <div class="sub">top-3 chunks</div>
+    </div>
+    <span class="arrow">→</span>
+    <div class="box llm">
+      <span class="icon">🤖</span>
+      <div class="label">LLM</div>
+      <div class="sub">context + question</div>
+    </div>
+    <span class="arrow">→</span>
+    <div class="box ans">
+      <span class="icon">✅</span>
+      <div class="label">Grounded Answer</div>
+      <div class="sub">with source citations</div>
+    </div>
+  </div>
+</div>
+
+<!-- what "grounded" means -->
+<div style="margin-top:16px;">
+  <div class="connector">
+    <strong>What "grounded" means:</strong> the LLM only sees the retrieved chunks — it can't hallucinate beyond them
+  </div>
+</div>
+
+<!-- LEGEND -->
+<div class="legend">
+  <div class="leg-item"><div class="leg-dot" style="background:#0ea5e9"></div> Chunking splits text into overlapping windows</div>
+  <div class="leg-item"><div class="leg-dot" style="background:#6366f1"></div> Embeddings map meaning → vector space (all-MiniLM-L6-v2)</div>
+  <div class="leg-item"><div class="leg-dot" style="background:#10b981"></div> ChromaDB stores & searches vectors on disk</div>
+  <div class="leg-item"><div class="leg-dot" style="background:#ec4899"></div> LLM generates answer from retrieved context (GPT-4o-mini)</div>
+</div>
+
+<!-- TIMING -->
+<div class="timing">
+  <h2>⏱ Typical Latency</h2>
+  <div class="t-row">
+    <div class="t-label">Indexing (one-time, 4 articles)</div>
+    <div class="t-bar-wrap"><div class="t-bar" style="width:90%;background:#0ea5e9"></div></div>
+    <div class="t-val">~20s</div>
+  </div>
+  <div class="t-row">
+    <div class="t-label">Query embedding</div>
+    <div class="t-bar-wrap"><div class="t-bar" style="width:3%;background:#6366f1"></div></div>
+    <div class="t-val">&lt;10ms</div>
+  </div>
+  <div class="t-row">
+    <div class="t-label">Vector search (150 chunks)</div>
+    <div class="t-bar-wrap"><div class="t-bar" style="width:8%;background:#10b981"></div></div>
+    <div class="t-val">~50ms</div>
+  </div>
+  <div class="t-row">
+    <div class="t-label">LLM generation (GPT-4o-mini)</div>
+    <div class="t-bar-wrap"><div class="t-bar" style="width:60%;background:#ec4899"></div></div>
+    <div class="t-val">1–3s</div>
+  </div>
+</div>
+
+</body>
+</html>
