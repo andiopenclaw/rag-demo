@@ -153,8 +153,8 @@ async def on_message(message: cl.Message):
     ]
 
     # ── Step 3: Generate answer ───────────────────────────────────────────────
-    if has_openai():
-        oai = AsyncOpenAI(api_key=get_openai_key())
+    if has_claude():
+        client = anthropic.AsyncAnthropic(api_key=get_claude_key())
         context = "\n\n---\n\n".join(
             f"[Source: {c['title']}]\n{c['text']}" for c in chunks
         )
@@ -164,43 +164,38 @@ async def on_message(message: cl.Message):
 
         async with cl.Step(name="3️⃣  Generating answer", type="llm") as step:
             step.input = (
-                f"Sending **{len(context.split())} words** of context to `gpt-4o-mini`.\n\n"
+                f"Sending **{len(context.split())} words** of context to `{MODEL}`.\n\n"
                 f"Grounded on {len(chunks)} source chunks."
             )
-            stream = await oai.chat.completions.create(  # noqa: S106
-                model="gpt-4o-mini",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "Answer using ONLY the provided context. "
-                            "If the context lacks enough info, say so. "
-                            "Be concise and cite source titles."
-                        ),
-                    },
-                    {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {query}"},
-                ],
-                temperature=0.2,
-                max_tokens=500,
-                stream=True,
-            )
             full_response = ""
-            async for part in stream:
-                token = part.choices[0].delta.content or ""
-                full_response += token
-                await msg.stream_token(token)
+            async with client.messages.stream(
+                model=MODEL,
+                max_tokens=500,
+                system=(
+                    "Answer using ONLY the provided context. "
+                    "If the context lacks enough info, say so. "
+                    "Be concise and cite source titles."
+                ),
+                messages=[{
+                    "role": "user",
+                    "content": f"Context:\n{context}\n\nQuestion: {query}"
+                }],
+            ) as stream:
+                async for token in stream.text_stream:
+                    full_response += token
+                    await msg.stream_token(token)
             step.output = full_response
 
         await msg.stream_token(
             f"\n\n---\n_⚡ {embed_time*1000:.0f}ms embed · "
-            f"{retrieval_time*1000:.0f}ms retrieve · gpt-4o-mini_"
+            f"{retrieval_time*1000:.0f}ms retrieve · {MODEL}_"
         )
         await msg.update()
 
     else:
         await cl.Message(
             content=(
-                f"_No OpenAI key — showing retrieved sources:_\n\n"
+                f"_No Anthropic key — showing retrieved sources:_\n\n"
                 + "\n".join(
                     f"**[{i}]** `{c['similarity']:.3f}` {c['title']}"
                     for i, c in enumerate(chunks, 1)

@@ -51,48 +51,44 @@ def retrieve(query: str, collection, model, top_k: int = TOP_K):
     return chunks, elapsed
 
 
-def generate_with_openai(query: str, context_chunks: list) -> str:
-    """Use OpenAI to generate a grounded answer from retrieved context."""
+MODEL = "claude-sonnet-4-5"
+
+
+def generate_with_claude(query: str, context_chunks: list):
+    """Use Claude to generate a grounded answer from retrieved context."""
     try:
-        from openai import OpenAI
+        import anthropic
     except ImportError:
         return None
 
-    api_key = os.environ.get("OPENAI_API_KEY")
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         return None
 
-    client = OpenAI(api_key=api_key)
+    client = anthropic.Anthropic(api_key=api_key)
 
     context = "\n\n---\n\n".join(
         f"[Source: {c['title']}]\n{c['text']}" for c in context_chunks
     )
 
-    system_prompt = """You are a helpful assistant. Answer the user's question using ONLY the provided context.
-If the context doesn't contain enough information, say so honestly.
-Be concise and specific. Cite sources by article title."""
-
-    user_prompt = f"""Context:
-{context}
-
-Question: {query}
-
-Answer:"""
-
     t0 = time.time()
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-        temperature=0.2,
+    response = client.messages.create(
+        model=MODEL,
         max_tokens=500,
+        system=(
+            "You are a helpful assistant. Answer the user's question using ONLY "
+            "the provided context. If the context doesn't contain enough information, "
+            "say so honestly. Be concise and specific. Cite sources by article title."
+        ),
+        messages=[{
+            "role": "user",
+            "content": f"Context:\n{context}\n\nQuestion: {query}\n\nAnswer:"
+        }],
     )
     elapsed = time.time() - t0
 
-    answer = response.choices[0].message.content
-    tokens_used = response.usage.total_tokens
+    answer = response.content[0].text
+    tokens_used = response.usage.input_tokens + response.usage.output_tokens
     return answer, elapsed, tokens_used
 
 
@@ -119,7 +115,7 @@ def pretty_print_result(query: str, chunks: list, retrieval_time: float, answer=
             print(f"  {line}")
         print()
     else:
-        print("  ℹ️  (Set OPENAI_API_KEY to enable answer generation)")
+        print("  ℹ️  (Set ANTHROPIC_API_KEY to enable answer generation)")
         print()
 
     print("=" * width + "\n")
@@ -132,8 +128,8 @@ def main():
     client = chromadb.PersistentClient(path=DB_DIR)
     collection = client.get_collection(COLLECTION_NAME)
 
-    has_openai = bool(os.environ.get("OPENAI_API_KEY"))
-    mode = "Retrieval + Generation (OpenAI)" if has_openai else "Retrieval only (no OpenAI key)"
+    has_claude = bool(os.environ.get("ANTHROPIC_API_KEY"))
+    mode = f"Retrieval + Generation ({MODEL})" if has_claude else "Retrieval only (no ANTHROPIC_API_KEY)"
     print(f"Mode: {mode}")
     print(f"Loaded collection: {COLLECTION_NAME} ({collection.count()} chunks)\n")
 
@@ -156,8 +152,8 @@ def main():
         chunks, retrieval_time = retrieve(query, collection, model)
 
         answer_data = None
-        if has_openai:
-            result = generate_with_openai(query, chunks)
+        if has_claude:
+            result = generate_with_claude(query, chunks)
             if result:
                 answer, gen_time, tokens = result
                 answer_data = (answer, gen_time, tokens)
