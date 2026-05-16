@@ -1,0 +1,180 @@
+"""
+RAG Demo — Chainlit App
+Chat interface for querying the knowledge base.
+
+Run with:
+    chainlit run app.py
+
+With OpenAI (for generated answers):
+    export OPENAI_API_KEY=sk-...
+    chainlit run app.py
+"""
+
+import os
+import time
+import chainlit as cl
+from sentence_transformers import SentenceTransformer
+import chromadb
+
+DB_DIR = "chroma_db"
+COLLECTION_NAME = "space_exploration"
+TOP_K = 3
+
+# ── Load once at startup ──────────────────────────────────────────────────────
+
+print("Loading embedding model...")
+_model = SentenceTransformer("all-MiniLM-L6-v2")
+
+print("Connecting to ChromaDB...")
+try:
+    _client = chromadb.PersistentClient(path=DB_DIR)
+    _collection = _client.get_collection(COLLECTION_NAME)
+    print(f"✓ Knowledge base ready: {_collection.count()} chunks")
+except Exception as e:
+    _collection = None
+    print(f"✗ Could not load knowledge base: {e}")
+    print("  Run: python build_index.py first")
+
+HAS_OPENAI = bool(os.environ.get("OPENAI_API_KEY"))
+
+
+# ── Chainlit ──────────────────────────────────────────────────────────────────
+
+@cl.on_chat_start
+async def on_start():
+    if _collection is None:
+        await cl.Message(
+            content="⚠️ Knowledge base not loaded. Run `python build_index.py` first."
+        ).send()
+        return
+
+    mode = "🤖 Retrieval + Generation (OpenAI)" if HAS_OPENAI else "🔍 Retrieval only"
+    await cl.Message(
+        content=(
+            f"## 🚀 RAG Demo — Space Exploration\n\n"
+            f"**{_collection.count()} chunks** indexed · **Mode:** {mode}\n\n"
+            f"Ask anything about the **Apollo program**, **James Webb Space Telescope**, "
+            f"**SpaceX**, or the **ISS**!\n\n"
+            + ("" if HAS_OPENAI else
+               "_Set `OPENAI_API_KEY` to enable generated answers. "
+               "Right now I'll show retrieved sources._")
+        )
+    ).send()
+
+
+@cl.on_message
+async def on_message(message: cl.Message):
+    if _collection is None:
+        await cl.Message(content="⚠️ Knowledge base not loaded.").send()
+        return
+
+    query = message.content.strip()
+
+    # ── Step 1: Embed the query ───────────────────────────────────────────────
+    async with cl.Step(name="1️⃣  Embedding query", type="tool") as step1:
+        t0 = time.time()
+        embedding = _model.encode([query])[0]
+        embed_time = time.time() - t0
+        step1.output = (
+            f"Converted query into a **{len(embedding)}-dimensional vector** "
+            f"in `{embed_time * 1000:.0f}ms` using `all-MiniLM-L6-v2`.\n\n"
+            f"This vector represents the *meaning* of your question in numeric form."
+        )
+
+    # ── Step 2: Retrieve from ChromaDB ────────────────────────────────────────
+    async with cl.Step(name="2️⃣  Searching knowledge base", type="retrieval") as step2:
+        t0 = time.time()
+        results = _collection.query(
+            query_embeddings=[embedding.tolist()],
+            n_results=TOP_K,
+            include=["documents", "metadatas", "distances"],
+        )
+        retrieval_time = time.time() - t0
+
+        chunks = []
+        for doc, meta, dist in zip(
+            results["documents"][0],
+            results["metadatas"][0],
+            results["distances"][0],
+        ):
+            chunks.append({
+                "text": doc,
+                "title": meta["title"],
+                "similarity": round(1 - dist, 3),
+            })
+
+        chunk_lines = "\n".join(
+            f"- **[{i}]** `{c['similarity']:.3f}` {'█' * int(c['similarity'] * 15)}  {c['title']}"
+            for i, c in enumerate(chunks, 1)
+        )
+        step2.output = (
+            f"Searched **{_collection.count()} chunks** in ChromaDB using cosine similarity.\n"
+            f"Retrieved top {TOP_K} matches in `{retrieval_time * 1000:.0f}ms`:\n\n"
+            f"{chunk_lines}"
+        )
+
+    # Source elements shown inline on the final message
+    source_elements = [
+        cl.Text(
+            name=f"[{i}] {c['title']}  ·  {c['similarity']:.3f}",
+            content=c["text"],
+            display="inline",
+        )
+        for i, c in enumerate(chunks, 1)
+    ]
+
+    # ── Step 3: Generate (if OpenAI available) ────────────────────────────────
+    if HAS_OPENAI:
+        from openai import AsyncOpenAI
+        oai = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
+        context = "\n\n---\n\n".join(
+            f"[Source: {c['title']}]\n{c['text']}" for c in chunks
+        )
+
+        async with cl.Step(name="3️⃣  Generating answer", type="llm") as step3:
+            step3.input = (
+                f"Sending **{len(context.split())} words** of context + question to `gpt-4o-mini`.\n\n"
+                f"Prompt includes {len(chunks)} source chunks as grounding context."
+            )
+
+        msg = cl.Message(content="", elements=source_elements)
+        await msg.send()
+
+        stream = await oai.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Answer using ONLY the provided context. "
+                        "If the context lacks enough info, say so. "
+                        "Be concise and cite source titles."
+                    ),
+                },
+                {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {query}"},
+            ],
+            temperature=0.2,
+            max_tokens=500,
+            stream=True,
+        )
+        async for part in stream:
+            token = part.choices[0].delta.content or ""
+            await msg.stream_token(token)
+        await msg.stream_token(
+            f"\n\n---\n_⚡ {embed_time*1000:.0f}ms embed · "
+            f"{retrieval_time*1000:.0f}ms retrieve · gpt-4o-mini_"
+        )
+        await msg.update()
+
+    else:
+        source_list = "\n".join(
+            f"**[{i}]** `{c['similarity']:.3f}` {c['title']}"
+            for i, c in enumerate(chunks, 1)
+        )
+        await cl.Message(
+            content=(
+                f"_No OpenAI key — showing retrieved sources:_\n\n{source_list}\n\n"
+                f"_⚡ {embed_time*1000:.0f}ms embed · {retrieval_time*1000:.0f}ms retrieve_"
+            ),
+            elements=source_elements,
+        ).send()
