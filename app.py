@@ -273,23 +273,26 @@ async def on_message(message: cl.Message):
             )
         ]
 
+        step.elements = [
+            cl.Text(
+                name=f"Source {i}",
+                content=(
+                    f"{c['title']} · similarity {c['similarity']:.3f}\n\n"
+                    f"{c['text']}"
+                ),
+                display="side",
+            )
+            for i, c in enumerate(chunks, 1)
+        ]
+
         step.output = (
             f"Searched **{_collection.count()} chunks** in ChromaDB using cosine similarity.\n"
             f"Retrieved top {TOP_K} matches in `{retrieval_time * 1000:.0f}ms`:\n\n"
             + "\n".join(
-                f"- **[{i}]** `{c['similarity']:.3f}` {'█' * int(c['similarity'] * 15)}  {c['title']}"
+                f"- Source {i}: `{c['similarity']:.3f}` {'█' * int(c['similarity'] * 15)}  {c['title']}"
                 for i, c in enumerate(chunks, 1)
             )
         )
-
-    source_elements = [
-        cl.Text(
-            name=f"[{i}] {c['title']}  ·  {c['similarity']:.3f}",
-            content=c["text"],
-            display="inline",
-        )
-        for i, c in enumerate(chunks, 1)
-    ]
 
     # ── Step 3: Generate answer ───────────────────────────────────────────────
     model_label = cl.user_session.get("model_label")
@@ -305,7 +308,6 @@ async def on_message(message: cl.Message):
                 )
                 + f"\n\n_⚡ {embed_time*1000:.0f}ms embed · {retrieval_time*1000:.0f}ms retrieve_"
             ),
-            elements=source_elements,
         ).send()
         return
 
@@ -314,7 +316,7 @@ async def on_message(message: cl.Message):
         f"[Source: {c['title']}]\n{c['text']}" for c in chunks
     )
 
-    msg = cl.Message(content="", elements=source_elements)
+    msg = cl.Message(content="")
     await msg.send()
 
     try:
